@@ -11,7 +11,7 @@ export default async function RepairDetailPage({ params }: { params: Promise<{ i
 
   const { data: repair } = await supabase
     .from('repairs')
-    .select('*, customers(*)')
+    .select('*, customers(*), repair_services(*)')
     .eq('id', id)
     .single()
 

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Repair } from '@/lib/types'
+import { Repair, RepairService } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -11,8 +11,19 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { ArrowLeft, Phone, MapPin, Wrench, Calendar, CheckCircle, RotateCcw } from 'lucide-react'
+import {
+  ArrowLeft, Phone, MapPin, Wrench, Calendar, CheckCircle,
+  RotateCcw, Plus, Trash2, MessageCircle,
+} from 'lucide-react'
 import Link from 'next/link'
+
+const PRESET_SERVICES = [
+  'Servis Ücreti',
+  'İşçilik',
+  'Yedek Parça',
+  'Temizlik',
+  'Yazılım Güncelleme',
+]
 
 function formatDate(dateStr: string | null) {
   if (!dateStr) return '—'
@@ -25,6 +36,10 @@ function formatDate(dateStr: string | null) {
   })
 }
 
+function formatPrice(price: number) {
+  return price.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
   const [repair, setRepair] = useState(initial)
   const [machineInfo, setMachineInfo] = useState(initial.machine_info)
@@ -32,10 +47,17 @@ export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
   const [repairNotes, setRepairNotes] = useState(initial.repair_notes ?? '')
   const [saving, setSaving] = useState(false)
   const [closing, setClosing] = useState(false)
+
+  const [services, setServices] = useState<RepairService[]>(initial.repair_services ?? [])
+  const [newServiceName, setNewServiceName] = useState('')
+  const [newServicePrice, setNewServicePrice] = useState('')
+  const [addingService, setAddingService] = useState(false)
+
   const router = useRouter()
   const supabase = createClient()
 
   const isOpen = repair.status === 'open'
+  const total = services.reduce((sum, s) => sum + Number(s.price), 0)
 
   async function handleUpdate() {
     setSaving(true)
@@ -47,7 +69,7 @@ export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
         repair_notes: repairNotes || null,
       })
       .eq('id', repair.id)
-      .select('*, customers(*)')
+      .select('*, customers(*), repair_services(*)')
       .single()
 
     if (error) {
@@ -69,7 +91,7 @@ export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
         closed_at: isOpen ? new Date().toISOString() : null,
       })
       .eq('id', repair.id)
-      .select('*, customers(*)')
+      .select('*, customers(*), repair_services(*)')
       .single()
 
     if (error) {
@@ -80,6 +102,71 @@ export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
       router.refresh()
     }
     setClosing(false)
+  }
+
+  async function handleAddService() {
+    const name = newServiceName.trim()
+    const price = parseFloat(newServicePrice.replace(',', '.'))
+
+    if (!name) { toast.error('Hizmet adı boş olamaz.'); return }
+    if (isNaN(price) || price < 0) { toast.error('Geçerli bir fiyat gir.'); return }
+
+    setAddingService(true)
+    const { data, error } = await supabase
+      .from('repair_services')
+      .insert({ repair_id: repair.id, service_name: name, price })
+      .select()
+      .single()
+
+    if (error) {
+      toast.error('Hizmet eklenemedi: ' + error.message)
+    } else {
+      setServices((prev) => [...prev, data])
+      setNewServiceName('')
+      setNewServicePrice('')
+    }
+    setAddingService(false)
+  }
+
+  async function handleRemoveService(serviceId: string) {
+    const { error } = await supabase
+      .from('repair_services')
+      .delete()
+      .eq('id', serviceId)
+
+    if (error) {
+      toast.error('Silinemedi: ' + error.message)
+    } else {
+      setServices((prev) => prev.filter((s) => s.id !== serviceId))
+    }
+  }
+
+  function handleWhatsApp() {
+    const phone = repair.customers?.phone?.replace(/\D/g, '')
+    if (!phone) { toast.error('Müşteri telefon numarası bulunamadı.'); return }
+
+    const serviceLines = services.length > 0
+      ? services.map((s) => `  • ${s.service_name}: ${formatPrice(s.price)} ₺`).join('\n')
+      : '  (henüz hizmet eklenmedi)'
+
+    const message = [
+      `Sayın ${repair.customers?.full_name},`,
+      ``,
+      `Tamir işleminizle ilgili bilgilendirme:`,
+      ``,
+      `📱 Cihaz: ${machineInfo}`,
+      `🔧 Arıza: ${problemDesc}`,
+      ``,
+      `💰 Hizmetler & Ücretler:`,
+      serviceLines,
+      ``,
+      `Toplam: ${formatPrice(total)} ₺`,
+      ``,
+      `İyi günler dileriz.`,
+    ].join('\n')
+
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    window.open(url, '_blank')
   }
 
   return (
@@ -189,6 +276,90 @@ export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
             </Button>
           </CardContent>
         </Card>
+
+        {/* Hizmetler & Ücretler */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Hizmetler & Ücretler</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Mevcut hizmetler */}
+            {services.length > 0 ? (
+              <div className="space-y-2">
+                {services.map((service) => (
+                  <div key={service.id} className="flex items-center justify-between gap-2">
+                    <span className="text-sm flex-1">{service.service_name}</span>
+                    <span className="text-sm font-medium tabular-nums">
+                      {formatPrice(service.price)} ₺
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleRemoveService(service.id)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="border-t pt-2 flex justify-between items-center font-semibold">
+                  <span>Toplam</span>
+                  <span className="tabular-nums">{formatPrice(total)} ₺</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Henüz hizmet eklenmedi.</p>
+            )}
+
+            {/* Yeni hizmet ekleme */}
+            <div className="space-y-2 pt-1">
+              <div className="space-y-1">
+                <Label>Hizmet Adı</Label>
+                <Input
+                  list="preset-services"
+                  placeholder="Seç veya yaz..."
+                  value={newServiceName}
+                  onChange={(e) => setNewServiceName(e.target.value)}
+                />
+                <datalist id="preset-services">
+                  {PRESET_SERVICES.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              </div>
+              <div className="space-y-1">
+                <Label>Fiyat (₺)</Label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  min="0"
+                  step="0.01"
+                  value={newServicePrice}
+                  onChange={(e) => setNewServicePrice(e.target.value)}
+                />
+              </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleAddService}
+                disabled={addingService}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                {addingService ? 'Ekleniyor...' : 'Hizmet Ekle'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* WhatsApp Gönder */}
+        <Button
+          className="w-full h-12 text-base font-semibold bg-[#25D366] hover:bg-[#1ebe5d] text-white"
+          onClick={handleWhatsApp}
+        >
+          <MessageCircle className="w-5 h-5 mr-2" />
+          WhatsApp ile Gönder
+        </Button>
 
         {/* Aç / Kapat */}
         <Button

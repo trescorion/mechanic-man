@@ -19,4 +19,13 @@ export type Repair = {
   opened_at: string
   closed_at: string | null
   customers?: Customer
+  repair_services?: RepairService[]
+}
+
+export type RepairService = {
+  id: string
+  repair_id: string
+  service_name: string
+  price: number
+  created_at: string
 }
