@@ -142,8 +142,9 @@ export function RepairDetailClient({ repair: initial }: { repair: Repair }) {
   }
 
   function handleWhatsApp() {
-    const phone = repair.customers?.phone?.replace(/\D/g, '')
-    if (!phone) { toast.error('Müşteri telefon numarası bulunamadı.'); return }
+    const raw = repair.customers?.phone?.replace(/\D/g, '') ?? ''
+    if (!raw) { toast.error('Müşteri telefon numarası bulunamadı.'); return }
+    const phone = raw.startsWith('90') ? raw : raw.startsWith('0') ? '9' + raw : '90' + raw
 
     const serviceLines = services.length > 0
       ? services.map((s) => `  • ${s.service_name}: ${formatPrice(s.price)} ₺`).join('\n')
